@@ -27,7 +27,7 @@
      </rect>
     </property>
     <property name="title">
-     <string>序列阜設定</string>
+     <string>序列埠設定</string>
     </property>
     <widget class="QWidget" name="gridLayoutWidget">
      <property name="geometry">

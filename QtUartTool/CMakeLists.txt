@@ -23,7 +23,7 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
     qt_add_executable(QtUartTool
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
-        serialportdevice.h serialportdevice.cpp
+
         DeviceInfo.h
     )
 # Define target properties for Android with Qt 6 as:

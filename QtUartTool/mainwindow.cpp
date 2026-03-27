@@ -6,11 +6,12 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
     , serialPort(new QSerialPort(this))
+    , rxTimer(new QTimer(this))
 
 {
     ui->setupUi(this);
 
-    initWidgets();
+    initUi();
 
     connect(ui->refreshBtn, &QPushButton::clicked,
             this, &MainWindow::loadPorts);
@@ -23,6 +24,15 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(ui->sendBtn, &QPushButton::clicked,
             this, &MainWindow::sendData);
+
+    connect(serialPort, &QSerialPort::readyRead,
+            this, &MainWindow::readData);
+
+    connect(rxTimer, &QTimer::timeout,
+            this, &MainWindow::flushRxBuffer);
+
+    connect(serialPort, &QSerialPort::errorOccurred,
+            this, &MainWindow::handleSerialPortError);
 }
 
 MainWindow::~MainWindow()
@@ -30,7 +40,7 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
-void MainWindow::initWidgets(){
+void MainWindow::initUi(){
 
     /* 建立鮑率選項 */
     ui->baudRateCmb->addItems({
@@ -45,6 +55,17 @@ void MainWindow::initWidgets(){
     ui->packetLogTbl->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Custom);
     ui->packetLogTbl->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Custom);
     ui->packetLogTbl->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+
+    rxTimer->setSingleShot(true); //將計時器設定成「單次觸發」
+}
+
+void  MainWindow::setPortOpenUi(const bool isOpen){
+    ui->closeBtn->setEnabled(isOpen);
+    ui->sendBtn->setEnabled(isOpen);
+    ui->openBtn->setEnabled(!isOpen);
+    ui->portNameCmb->setEnabled(!isOpen);
+    ui->baudRateCmb->setEnabled(!isOpen);
+    ui->refreshBtn->setEnabled(!isOpen);
 }
 
 void MainWindow::loadPorts(){
@@ -65,8 +86,8 @@ void MainWindow::loadPorts(){
 }
 
 void MainWindow::showDeviceInfo(int index){
-    qDebug() << "Item Changed !!";
-    qDebug() << index;
+    //qDebug() << "Item Changed !!";
+    //qDebug() << index;
 
     if(index == -1){
         ui->devicePortNameValueLbl->setText("N/A");
@@ -91,8 +112,6 @@ void MainWindow::on_openBtn_clicked()
 
     const QString name = ui->portNameCmb->currentText();
     const int baudRate = ui->baudRateCmb->currentText().toInt();
-    qDebug() << name;
-    qDebug() << baudRate;
 
     if(name.isEmpty()){
         QMessageBox::warning(this, "Open Port", "請選擇序列阜的名稱!!");
@@ -101,8 +120,7 @@ void MainWindow::on_openBtn_clicked()
     }
 
     if(openPort(name, baudRate)){
-        ui->closeBtn->setEnabled(true);
-        ui->sendBtn->setEnabled(true);
+        setPortOpenUi(true);
     }
     else{
         ui->openBtn->setEnabled(true);
@@ -122,7 +140,6 @@ bool MainWindow::openPort(const QString& portName, const int& baudRate){
     serialPort->setFlowControl(QSerialPort::NoFlowControl);
 
     if(!serialPort->open(QIODevice::ReadWrite)){
-        QMessageBox::warning(this,"Open Port","開啟失敗: "+serialPort->errorString());
         return false;
     }
 
@@ -132,22 +149,40 @@ bool MainWindow::openPort(const QString& portName, const int& baudRate){
 void MainWindow::closePort(){
     if(serialPort->isOpen()){
         serialPort->close();
-        ui->openBtn->setEnabled(true);
-        ui->closeBtn->setEnabled(false);
-        ui->sendBtn->setEnabled(false);
+        setPortOpenUi(false);
     }
 }
 
 void MainWindow::sendData(){
 
-    if(!serialPort->isOpen()) return;
+    if(!serialPort->isOpen()){
+        return;
+    }
 
     QByteArray data = ui->sendDataEdit->text().toUtf8();
 
-    serialPort->write(data);
+    qint64 written = serialPort->write(data);
 
-    appendPacketLog("Tx", data);
+    if(written == -1){
+        QMessageBox::warning(this, "Send Data", "Write failed: "+serialPort->errorString());
+        return;
+    }
+    else{
+        appendPacketLog("Tx", data);
+    }
 
+
+}
+
+void MainWindow::readData(){
+    const QByteArray data = serialPort->readAll();
+    qDebug() << QString::fromUtf8(data);
+
+    if(data.isEmpty()) return;
+
+    rxBuffer.append(data);
+
+    rxTimer->start(20); //只要還有新資料進來，就重新等 20 ms
 }
 
 void MainWindow::on_clearLogBtn_clicked()
@@ -166,4 +201,37 @@ void MainWindow::appendPacketLog(const QString& direction, const QByteArray& dat
     ui->packetLogTbl->setItem(row, 2, new QTableWidgetItem(data));
 }
 
+void MainWindow::flushRxBuffer(){
+    if(rxBuffer.isEmpty()) return;
 
+    appendPacketLog("Rx", rxBuffer);
+    rxBuffer.clear();
+}
+
+void MainWindow::handleSerialPortError(QSerialPort::SerialPortError error)
+{
+    QString title = "";
+    QString msg = "Error String: " + serialPort->errorString();
+
+    switch(error)
+    {
+    case QSerialPort::NoError:
+        return;
+        break;
+
+    case QSerialPort::PermissionError:
+        title = "PermissionError";
+        msg += "\n\n請檢查序列阜有沒有被其他程式佔據。";
+        break;
+
+    case QSerialPort::ResourceError:
+        title = "ResourceError";
+        msg += "\n\n裝置可能被拔除或資源異常。";
+
+        setPortOpenUi(false);
+        break;
+    }
+
+    QMessageBox::warning(this, title, msg);
+
+}
